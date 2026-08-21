@@ -2,1059 +2,361 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 仰臥起坐計數器與姿態糾正</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>仰臥起坐 AI 體能測驗</title>
+    
+    <!-- PWA Manifest & Theme Color -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#0f172a">
+
+    <!-- MediaPipe Pose -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Canvas Confetti -->
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-    <!-- MediaPipe Pose and Camera Utils -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-    
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-        canvas {
-            transform: scaleX(-1);
-        }
-        video {
-            transform: scaleX(-1);
+        .check-active {
+            background-color: #10B981 !important;
+            border-color: #10B981 !important;
+            color: #FFFFFF !important;
         }
     </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-blue-500 selection:text-white">
-
-    <!-- Top Navigation Bar -->
-    <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
-        <div class="max-w-7xl mx-auto flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <div class="p-2 bg-blue-600 rounded-xl shadow-lg shadow-blue-500/30">
-                    <i data-lucide="activity" class="w-6 h-6 text-white"></i>
-                </div>
-                <div>
-                    <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-                        仰臥起坐檢測器
-                        <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">v2.0 Live</span>
-                    </h1>
-                    <p class="text-xs text-slate-400">即時影像骨骼辨識 · 姿勢校正與計數系統</p>
-                </div>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+    <div id="app-container" class="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-center border-b border-slate-800 pb-4">
+            <h1 class="text-xl md:text-2xl font-bold text-emerald-400 flex items-center gap-2">
+                <i data-lucide="activity"></i> 仰臥起坐 AI 檢測系統
+            </h1>
+            <div id="rec-status" class="hidden flex items-center gap-2 bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs font-semibold animate-pulse">
+                <span class="w-2 h-2 rounded-full bg-red-500"></span> REC 錄影中
             </div>
+        </header>
 
-            <div class="flex items-center gap-2">
-                <button onclick="toggleTTS()" id="ttsBtn" class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1.5 text-xs font-medium">
-                    <i id="ttsIcon" data-lucide="volume-2" class="w-4 h-4 text-emerald-400"></i>
-                    <span id="ttsStatusText" class="hidden sm:inline">語音提示: 開</span>
-                </button>
-                <button onclick="openGuideModal()" class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1.5 text-xs font-medium">
-                    <i data-lucide="book-open" class="w-4 h-4 text-blue-400"></i>
-                    <span class="hidden sm:inline">動作規範</span>
-                </button>
+        <!-- Top Dashboard -->
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50">
+                <p class="text-xs text-slate-400 mb-1">完成次數</p>
+                <p id="counter" class="text-3xl font-extrabold text-emerald-400">0</p>
             </div>
-        </div>
-    </header>
-
-    <!-- Main Dashboard Container -->
-    <main class="max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
-
-        <!-- Left Column: Camera Viewfinder (7 cols on LG) -->
-        <div class="lg:col-span-7 flex flex-col space-y-4">
-            <div class="relative bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex-1 min-h-[380px] sm:min-h-[480px] flex items-center justify-center">
-                
-                <!-- Video & Overlay Canvas -->
-                <video id="webcam" autocomplete="off" playsinline webkit-playsinline muted class="hidden"></video>
-                <canvas id="output_canvas" class="absolute inset-0 w-full h-full object-cover z-10"></canvas>
-
-                <!-- Camera Standby / Loading Placeholder -->
-                <div id="cameraPlaceholder" class="relative z-20 flex flex-col items-center justify-center p-6 text-center space-y-4">
-                    <div class="w-20 h-20 bg-slate-800/80 rounded-full flex items-center justify-center border border-slate-700 shadow-inner">
-                        <i data-lucide="camera" class="w-10 h-10 text-slate-400"></i>
-                    </div>
-                    <div>
-                        <h3 class="text-base font-semibold text-white">啟動攝影鏡頭開始檢測</h3>
-                        <p class="text-xs text-slate-400 mt-1 max-w-xs">點擊下方按鈕允許相機權限，AI 即刻進行肢體骨骼捕捉與仰臥起坐分析。</p>
-                    </div>
-                    <div class="flex gap-2.5 w-full max-w-xs justify-center">
-                        <button onclick="toggleCamera()" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2">
-                            <i data-lucide="power" class="w-4 h-4"></i>
-                            開啟鏡頭 AI 偵測
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Camera Error Alert Overlay -->
-                <div id="cameraErrorBox" class="hidden absolute inset-0 z-30 bg-slate-950/95 backdrop-blur-md p-6 flex flex-col items-center justify-center text-center space-y-3 overflow-y-auto">
-                    <div class="p-3 bg-red-500/20 text-red-400 rounded-full border border-red-500/30">
-                        <i data-lucide="camera-off" class="w-8 h-8"></i>
-                    </div>
-                    <h4 class="text-sm font-bold text-white" id="camErrorTitle">無法取得鏡頭權限</h4>
-                    <p class="text-xs text-slate-300 max-w-xs leading-relaxed" id="camErrorMessage">
-                        請檢查瀏覽器網址列旁邊的鎖頭圖示，確保已允許存取鏡頭。
-                    </p>
-                    <div class="p-3 bg-slate-900 border border-slate-800 rounded-xl text-left text-[11px] text-slate-400 space-y-1 w-full max-w-xs">
-                        <p class="font-semibold text-slate-300 mb-1">常見排錯步驟：</p>
-                        <p>1. 點擊網址列左側「鎖頭/設定」圖示，開啓「相機/鏡頭」權限。</p>
-                        <p>2. 若在內嵌預覽視窗中，請點擊下方「以新分頁開啟」重新授權。</p>
-                        <p>3. 確認無其他軟體（如 Line, Zoom, Meet）正占用鏡頭。</p>
-                    </div>
-                    <div class="flex gap-2 justify-center">
-                        <button onclick="dismissCameraError(); startCamera();" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition">
-                            重新嘗試開啟
-                        </button>
-                        <button onclick="openInNewTab()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition flex items-center gap-1">
-                            <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
-                            以新分頁開啟
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Status Badge Overlay -->
-                <div id="liveStatusBadge" class="hidden absolute top-4 left-4 z-30 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-2 text-xs">
-                    <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
-                    <span id="statusText" class="font-semibold text-slate-200">準備側躺於瑜伽墊上</span>
-                </div>
-
-                <!-- Live Form Feedback Alert Banner -->
-                <div id="dynamicFormTip" class="hidden absolute bottom-4 left-4 right-4 z-30 bg-slate-950/90 backdrop-blur-md p-3 rounded-xl border border-slate-800 text-xs flex items-center gap-2 shadow-lg">
-                    <i data-lucide="alert-circle" class="w-4 h-4 text-amber-400 shrink-0"></i>
-                    <span id="formTipText" class="text-slate-300 font-medium">動作提示警語</span>
-                </div>
-
-                <!-- Live Recording Indicator Badge -->
-                <div id="recBadge" class="hidden absolute top-4 right-4 z-30 bg-red-600/90 text-white backdrop-blur-md px-3 py-1.5 rounded-xl border border-red-400/30 flex items-center gap-2 text-xs font-bold animate-pulse">
-                    <span class="w-2 h-2 rounded-full bg-white"></span>
-                    <span>REC 測驗錄影中</span>
-                </div>
+            <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50">
+                <p class="text-xs text-slate-400 mb-1">倒數計時器</p>
+                <p id="timer" class="text-3xl font-extrabold text-amber-400">60s</p>
             </div>
-
-            <!-- Controls Panel -->
-            <div class="flex items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-3 rounded-xl">
-                <button id="toggleCamBtn" onclick="toggleCamera()" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-2">
-                    <i data-lucide="video" class="w-4 h-4"></i>
-                    <span id="camBtnText">開啟鏡頭</span>
-                </button>
-                <button onclick="resetCounter()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2">
-                    <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
-                    重新計算
+            <div class="col-span-2 md:col-span-1 bg-slate-800/80 p-4 rounded-xl border border-slate-700/50 flex flex-col justify-center">
+                <button id="test-btn" onclick="toggleTest()" class="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2">
+                    <i data-lucide="play"></i> 開始 1 分鐘體能測驗
                 </button>
             </div>
         </div>
 
-        <!-- Right Column: Counter, Target Settings, Timers & Real-time Metrics (5 cols on LG) -->
-        <div class="lg:col-span-5 flex flex-col space-y-4">
+        <!-- Main Video and Skeleton View -->
+        <div class="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 aspect-video flex items-center justify-center">
+            <video id="webcam" playsinline webkit-playsinline muted autoplay class="hidden"></video>
+            <canvas id="output_canvas" class="w-full h-full object-contain"></canvas>
             
-            <!-- Mode Switcher -->
-            <div class="grid grid-cols-2 gap-2 bg-slate-900 border border-slate-800 p-1.5 rounded-xl text-xs font-semibold">
-                <button id="modeTargetBtn" onclick="switchMode('target')" class="py-2.5 rounded-lg bg-blue-600 text-white shadow flex items-center justify-center gap-1.5 transition">
-                    <i data-lucide="target" class="w-4 h-4"></i>
-                    目標次數模式
-                </button>
-                <button id="modeTimerBtn" onclick="switchMode('timer')" class="py-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center gap-1.5 transition">
-                    <i data-lucide="timer" class="w-4 h-4"></i>
-                    1 分鐘體能測驗
-                </button>
-            </div>
-
-            <!-- Rep Counter Main Card -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between relative overflow-hidden shadow-xl">
-                <div class="absolute -right-10 -bottom-10 w-40 h-40 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
-
-                <div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
-                    <div>
-                        <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">目前完成次數</span>
-                        <h2 id="repCountDisplay" class="text-6xl font-extrabold text-white tracking-tight mt-1">0</h2>
-                    </div>
-                    
-                    <!-- Target Setting Selector (Target Mode) -->
-                    <div id="targetModeBox" class="text-right">
-                        <span class="text-xs text-slate-400">目標次數</span>
-                        <div class="flex items-center gap-1 mt-1">
-                            <select id="targetSelect" onchange="updateTarget()" class="bg-slate-800 border border-slate-700 text-sm font-semibold rounded-lg px-2.5 py-1 text-blue-400 focus:outline-none">
-                                <option value="10">10 次</option>
-                                <option value="15" selected>15 次</option>
-                                <option value="20">20 次</option>
-                                <option value="30">30 次</option>
-                                <option value="50">50 次</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Countdown Display (1-Min Challenge Mode) -->
-                    <div id="timerModeBox" class="text-right hidden">
-                        <span class="text-xs text-slate-400">測驗倒數</span>
-                        <div class="text-3xl font-extrabold font-mono text-amber-400 mt-1 flex items-center gap-1.5 justify-end">
-                            <i data-lucide="clock" class="w-6 h-6 animate-pulse text-amber-400"></i>
-                            <span id="timerDisplay">01:00</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Goal Progress Bar (Target Mode) -->
-                <div id="progressBarContainer" class="mt-4">
-                    <div class="flex justify-between text-xs font-medium text-slate-400 mb-1.5">
-                        <span>完成進度</span>
-                        <span id="progressPercent">0%</span>
-                    </div>
-                    <div class="w-full bg-slate-800 rounded-full h-3 overflow-hidden p-0.5">
-                        <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-300 w-0"></div>
-                    </div>
-                </div>
-
-                <!-- Timer Bar (1-Min Challenge Mode) -->
-                <div id="timerBarContainer" class="mt-4 hidden">
-                    <div class="flex justify-between text-xs font-medium text-slate-400 mb-1.5">
-                        <span>剩餘時間比例</span>
-                        <span id="timerPercent">100%</span>
-                    </div>
-                    <div class="w-full bg-slate-800 rounded-full h-3 overflow-hidden p-0.5">
-                        <div id="timerBar" class="bg-gradient-to-r from-amber-500 to-red-500 h-full rounded-full transition-all duration-300 w-full"></div>
-                    </div>
-                </div>
-
-                <!-- Mode Actions -->
-                <div class="mt-6 flex items-center gap-3">
-                    <button id="startTimerBtn" onclick="toggleTimerChallenge()" class="hidden flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition shadow-lg shadow-amber-600/20">
-                        <i id="timerBtnIcon" data-lucide="play" class="w-4 h-4"></i>
-                        <span id="timerBtnText">開始 1 分鐘測驗</span>
-                    </button>
-                </div>
-            </div>
-
-            <!-- Real-time Form Checklist Dashboard -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                    <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
-                    即時動作品質分析
-                </h3>
-
-                <div class="space-y-2">
-                    <!-- Rule 1: Knee Angle (Reference Only) -->
-                    <div class="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
-                        <div class="flex items-center gap-2.5">
-                            <div id="ruleKneeIcon" class="p-1.5 rounded-lg bg-slate-800 text-slate-400">
-                                <i data-lucide="check" class="w-4 h-4"></i>
-                            </div>
-                            <div>
-                                <p class="text-xs font-semibold text-slate-200">膝蓋彎曲角度（參考）</p>
-                                <p class="text-[11px] text-slate-500">實時監測腿部彎曲角度</p>
-                            </div>
-                        </div>
-                        <span id="kneeAngleVal" class="text-xs font-mono font-bold text-slate-400">--°</span>
-                    </div>
-
-                    <!-- Rule 2: Lift Height -->
-                    <div class="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
-                        <div class="flex items-center gap-2.5">
-                            <div id="ruleLiftIcon" class="p-1.5 rounded-lg bg-slate-800 text-slate-400">
-                                <i data-lucide="check" class="w-4 h-4"></i>
-                            </div>
-                            <div>
-                                <p class="text-xs font-semibold text-slate-200">起身離地高度 (15-30 cm)</p>
-                                <p class="text-[11px] text-slate-500">肩膀完整拉起腹部收緊</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Rule 3: Neck Guard -->
-                    <div class="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
-                        <div class="flex items-center gap-2.5">
-                            <div class="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
-                                <i data-lucide="shield" class="w-4 h-4"></i>
-                            </div>
-                            <div>
-                                <p class="text-xs font-semibold text-slate-200">頸椎安全防護</p>
-                                <p class="text-[11px] text-slate-500">雙手放耳側或交叉於胸前</p>
-                            </div>
-                        </div>
-                        <span class="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold">良好</span>
-                    </div>
-                </div>
+            <div id="status-overlay" class="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-medium text-slate-300">
+                請點擊允許啟動相機...
             </div>
         </div>
-    </main>
 
-    <!-- Instruction Standard Guide Modal -->
-    <div id="guideModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            <button onclick="closeGuideModal()" class="absolute top-4 right-4 p-2 text-slate-400 hover:text-white">
-                <i data-lucide="x" class="w-5 h-5"></i>
-            </button>
+        <!-- Movement Quality Analysis Dashboard -->
+        <div class="bg-slate-800/80 p-5 rounded-2xl border border-slate-700/50 space-y-3">
+            <h2 class="text-sm font-semibold text-slate-400 tracking-wider uppercase flex items-center gap-2">
+                <i data-lucide="check-circle-2"></i> 即時動作品質分析
+            </h2>
             
-            <div class="flex items-center gap-2 text-blue-400">
-                <i data-lucide="book-open" class="w-6 h-6"></i>
-                <h3 class="text-lg font-bold text-white">標準仰臥起坐動作指引</h3>
-            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <!-- Lie Flat Check -->
+                <div class="flex items-center justify-between p-3.5 bg-slate-900/60 rounded-xl border border-slate-800">
+                    <div class="flex items-center gap-3">
+                        <div id="check-flat" class="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center transition-all duration-200">
+                            <i data-lucide="check" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold text-slate-200">身體平躺於瑜伽墊</p>
+                            <p class="text-xs text-slate-500">起點與終點軀幹完全平躺</p>
+                        </div>
+                    </div>
+                </div>
 
-            <!-- YouTube Video Reference -->
-            <div class="space-y-2">
-                <div class="flex items-center justify-between text-xs text-slate-400">
-                    <span class="font-semibold text-slate-300 flex items-center gap-1">
-                        <i data-lucide="video" class="w-3.5 h-3.5 text-red-500"></i>
-                        動作示範影片（屈膝仰臥起坐）：
-                    </span>
-                    <a href="https://www.youtube.com/watch?v=aDS_0m0Y_Us" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline flex items-center gap-1 text-[11px]">
-                        前往 YouTube 觀看
-                        <i data-lucide="external-link" class="w-3 h-3"></i>
-                    </a>
-                </div>
-                <div class="relative w-full aspect-video rounded-xl overflow-hidden border border-slate-800 bg-slate-950 shadow-lg">
-                    <iframe 
-                        class="w-full h-full border-0"
-                        src="https://www.youtube.com/embed/aDS_0m0Y_Us" 
-                        title="屈膝仰臥起坐動作示範影片" 
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
-                        allowfullscreen>
-                    </iframe>
-                </div>
-            </div>
-
-            <div class="space-y-3 text-xs text-slate-300 leading-relaxed">
-                <div class="p-3 bg-slate-800/50 rounded-xl">
-                    <p class="font-bold text-blue-400 mb-1">1. 預備姿勢：</p>
-                    <p>身體平躺於瑜伽墊，兩膝分開與肩同寬，膝蓋彎曲約90度。雙手可交叉放於胸前或輕放耳側，避免雙手緊扣腦後用力拉扯頸椎。</p>
-                </div>
-                <div class="p-3 bg-slate-800/50 rounded-xl">
-                    <p class="font-bold text-blue-400 mb-1">2. 發力與呼吸：</p>
-                    <p>動作速度宜緩慢平穩，當腹肌收縮將身體向上拉起時吐氣，下壓躺平時吸氣。</p>
-                </div>
-                <div class="p-3 bg-slate-800/50 rounded-xl">
-                    <p class="font-bold text-blue-400 mb-1">3. 起身高度與停頓：</p>
-                    <p>上身離地大約15至30公分（約6至12吋）後，腹部收緊稍作停頓，再緩慢躺回原位，確保肩胛骨觸碰墊子算完整一次。</p>
+                <!-- Lift Height Check -->
+                <div class="flex items-center justify-between p-3.5 bg-slate-900/60 rounded-xl border border-slate-800">
+                    <div class="flex items-center gap-3">
+                        <div id="check-height" class="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center transition-all duration-200">
+                            <i data-lucide="check" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold text-slate-200">起身離地高度 (15-30 cm)</p>
+                            <p class="text-xs text-slate-500">肩膀完整拉起腹部收緊</p>
+                        </div>
+                    </div>
                 </div>
             </div>
-
-            <button onclick="closeGuideModal()" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition">
-                明白了，開始練習
-            </button>
         </div>
     </div>
 
-    <!-- 1-Min Challenge Summary Result Modal -->
-    <div id="resultModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-        <div class="bg-slate-900 border border-amber-500/30 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl relative text-center">
-            <div class="w-16 h-16 bg-amber-500/20 border border-amber-500/40 rounded-full flex items-center justify-center mx-auto text-amber-400">
-                <i data-lucide="trophy" class="w-8 h-8"></i>
+    <!-- Video Download Modal -->
+    <div id="result-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4">
+            <h3 class="text-xl font-bold text-emerald-400">測驗結束！</h3>
+            <p class="text-sm text-slate-300">您在 1 分鐘內共完成了 <span id="final-count" class="text-emerald-400 font-bold text-lg">0</span> 次標準仰臥起坐。</p>
+            <div class="aspect-video bg-black rounded-lg overflow-hidden border border-slate-800">
+                <video id="recorded-video" playsinline webkit-playsinline controls class="w-full h-full object-contain"></video>
             </div>
-            
-            <div>
-                <h3 class="text-xl font-bold text-white">1 分鐘體能測驗完成！</h3>
-                <p class="text-xs text-slate-400 mt-1">恭喜您完成 60 秒仰臥起坐挑戰</p>
-            </div>
-
-            <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/80 grid grid-cols-2 gap-4">
-                <div class="p-3 bg-slate-900/60 rounded-lg">
-                    <p class="text-[11px] text-slate-400">總完成次數</p>
-                    <p id="resultReps" class="text-3xl font-extrabold text-amber-400 mt-1">0 <span class="text-xs text-slate-300 font-normal">次</span></p>
-                </div>
-                <div class="p-3 bg-slate-900/60 rounded-lg">
-                    <p class="text-[11px] text-slate-400">平均速度</p>
-                    <p id="resultSpeed" class="text-3xl font-extrabold text-blue-400 mt-1">0 <span class="text-xs text-slate-300 font-normal">次/分</span></p>
-                </div>
-            </div>
-
-            <div id="ratingBox" class="p-3 rounded-xl bg-blue-900/20 border border-blue-500/30 text-blue-300 text-xs font-semibold">
-                評語載入中...
-            </div>
-
-            <!-- Recorded Video Preview & Download Section -->
-            <div id="videoContainer" class="space-y-2 border-t border-slate-800 pt-3">
-                <p class="text-xs font-semibold text-slate-300 flex items-center justify-center gap-1.5">
-                    <i data-lucide="video" class="w-3.5 h-3.5 text-red-400"></i>
-                    測驗過程實時錄影重播
-                </p>
-                <video id="resultVideoPreview" class="hidden w-full max-h-48 rounded-xl border border-slate-700 bg-black object-contain shadow-inner" controls></video>
-                <button id="downloadVideoBtn" onclick="downloadRecordedVideo()" class="hidden w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20">
-                    <i data-lucide="download" class="w-4 h-4"></i>
-                    下載測驗影片 (.webm)
-                </button>
-            </div>
-
             <div class="flex gap-3">
-                <button onclick="closeResultModal(); toggleTimerChallenge();" class="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs transition">
-                    再次挑戰 1 分鐘
-                </button>
-                <button onclick="closeResultModal()" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition">
-                    關閉視窗
+                <a id="download-btn" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-center transition-all flex items-center justify-center gap-2 cursor-pointer">
+                    <i data-lucide="download"></i> 下載測驗影片
+                </a>
+                <button onclick="closeModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 px-4 rounded-xl transition-all">
+                    關閉
                 </button>
             </div>
         </div>
     </div>
 
     <script>
-        // Global State Variables
-        let count = 0;
-        let targetReps = 15;
-        let currentMode = 'target'; // 'target' or 'timer'
-        let timerSeconds = 60;
-        const TOTAL_TIMER_DURATION = 60;
-        let timerInterval = null;
-        let isTimerRunning = false;
+        lucide.createIcons();
 
-        // Video Recording Variables
-        let mediaRecorder = null;
-        let recordedChunks = [];
-        let recordedVideoBlob = null;
-        let recordedVideoUrl = null;
-
-        let sitUpState = 'DOWN'; // 'DOWN', 'GOING_UP', 'UP', 'GOING_DOWN'
-        let hasReachedValidUp = false;          // 記錄本次動作是否達到離地 15-30cm 標準
-        let camera = null;
-        let pose = null;
-        let isCameraActive = false;
-        let ttsEnabled = true;
-        let lastVoiceTime = 0;
-        let animationFrameId = null;
-
-        // Keypoints Angle Tracking
-        let currentKneeAngle = 0;
-        let currentTorsoAngle = 0;
-
-        // DOM Element Cache
         const videoElement = document.getElementById('webcam');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
-        const cameraPlaceholder = document.getElementById('cameraPlaceholder');
-        const liveStatusBadge = document.getElementById('liveStatusBadge');
-        const statusText = document.getElementById('statusText');
-        const statusDot = document.getElementById('statusDot');
-        const dynamicFormTip = document.getElementById('dynamicFormTip');
-        const formTipText = document.getElementById('formTipText');
-        const repCountDisplay = document.getElementById('repCountDisplay');
-        const progressBar = document.getElementById('progressBar');
-        const progressPercent = document.getElementById('progressPercent');
+        const counterEl = document.getElementById('counter');
+        const timerEl = document.getElementById('timer');
+        const statusEl = document.getElementById('status-overlay');
+        const checkFlat = document.getElementById('check-flat');
+        const checkHeight = document.getElementById('check-height');
 
-        function startRecording() {
-            recordedChunks = [];
-            recordedVideoBlob = null;
-            if (recordedVideoUrl) {
-                URL.revokeObjectURL(recordedVideoUrl);
-                recordedVideoUrl = null;
-            }
+        let count = 0;
+        let isTesting = false;
+        let timeLeft = 60;
+        let timerInterval = null;
+        let stage = "flat"; 
+        
+        let mediaRecorder;
+        let recordedChunks = [];
+        let wakeLock = null; // Screen Wake Lock 變數
 
-            try {
-                // Capture canvas stream with AI skeleton rendering
-                const stream = canvasElement.captureStream(30);
-                let options = { mimeType: 'video/webm;codecs=vp9' };
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                    options = { mimeType: 'video/webm' };
-                }
-
-                mediaRecorder = new MediaRecorder(stream, options);
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data && e.data.size > 0) {
-                        recordedChunks.push(e.data);
-                    }
-                };
-
-                mediaRecorder.onstop = () => {
-                    recordedVideoBlob = new Blob(recordedChunks, { type: 'video/webm' });
-                    recordedVideoUrl = URL.createObjectURL(recordedVideoBlob);
-                    updateVideoPreviewUI();
-                };
-
-                mediaRecorder.start(1000); // Record in 1s chunk intervals
-                const recBadge = document.getElementById('recBadge');
-                if (recBadge) recBadge.classList.remove('hidden');
-            } catch (err) {
-                console.warn("Failed to start MediaRecorder:", err);
-            }
-        }
-
-        function stopRecording() {
-            const recBadge = document.getElementById('recBadge');
-            if (recBadge) recBadge.classList.add('hidden');
-
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                try {
-                    mediaRecorder.stop();
-                } catch (e) {
-                    console.warn("Error stopping recorder:", e);
-                }
-            }
-        }
-
-        function updateVideoPreviewUI() {
-            const videoPreview = document.getElementById('resultVideoPreview');
-            const downloadBtn = document.getElementById('downloadVideoBtn');
-
-            if (recordedVideoUrl && videoPreview && downloadBtn) {
-                videoPreview.src = recordedVideoUrl;
-                videoPreview.classList.remove('hidden');
-                downloadBtn.classList.remove('hidden');
-            }
-        }
-
-        function downloadRecordedVideo() {
-            if (!recordedVideoUrl) return;
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = recordedVideoUrl;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            a.download = `仰臥起坐一分鐘測驗影片_${timestamp}.webm`;
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(() => {
-                document.body.removeChild(a);
-            }, 100);
-        }
-
-        // Initialize Lucide Icons on load
-        window.addEventListener('DOMContentLoaded', () => {
-            lucide.createIcons();
-            initPoseDetector();
-        });
-
-        // Modal Controls
-        function openGuideModal() {
-            document.getElementById('guideModal').classList.remove('hidden');
-        }
-
-        function closeGuideModal() {
-            document.getElementById('guideModal').classList.add('hidden');
-        }
-
-        // Speech Synthesis Controls
-        function toggleTTS() {
-            ttsEnabled = !ttsEnabled;
-            const ttsStatusText = document.getElementById('ttsStatusText');
-            const ttsIcon = document.getElementById('ttsIcon');
-            if (ttsEnabled) {
-                if (ttsStatusText) ttsStatusText.innerText = "語音提示: 開";
-                if (ttsIcon) ttsIcon.setAttribute('data-lucide', 'volume-2');
-                speak("語音提示已開啟", true);
-            } else {
-                if (ttsStatusText) ttsStatusText.innerText = "語音提示: 關";
-                if (ttsIcon) ttsIcon.setAttribute('data-lucide', 'volume-x');
-                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-            }
-            if (window.lucide) lucide.createIcons();
-        }
-
-        function speak(text, force = false) {
-            if (!ttsEnabled && !force) return;
-            if (!('speechSynthesis' in window)) return;
-
-            const now = Date.now();
-            if (!force && now - lastVoiceTime < 1200) return;
-            lastVoiceTime = now;
-
-            try {
-                window.speechSynthesis.cancel();
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = 'zh-TW';
-                utterance.rate = 1.1;
-                window.speechSynthesis.speak(utterance);
-            } catch (e) {
-                console.warn("Speech synthesis error:", e);
-            }
-        }
-
-        // Geometric Angle Calculation (3 Joint Points)
         function calculateAngle(a, b, c) {
             const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
             let angle = Math.abs((radians * 180.0) / Math.PI);
-            if (angle > 180.0) {
-                angle = 360 - angle;
-            }
+            if (angle > 180.0) angle = 360 - angle;
             return angle;
         }
 
-        function openInNewTab() {
-            try {
-                const htmlContent = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
-                const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-                const blobUrl = URL.createObjectURL(blob);
-                const newWin = window.open(blobUrl, '_blank');
-                if (!newWin) {
-                    alert("瀏覽器攔截了彈出視窗，請允許開啟彈出視窗後再試一次。");
-                }
-            } catch (e) {
-                console.error("Open in new tab fallback error:", e);
-                window.open(window.location.href, '_blank');
-            }
-        }
-
-        function initPoseDetector() {
-            pose = new Pose({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-            });
-
-            pose.setOptions({
-                modelComplexity: 1,
-                smoothLandmarks: true,
-                enableSegmentation: false,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-
-            pose.onResults(onResults);
-        }
-
-        function toggleCamera() {
-            if (isCameraActive) {
-                stopCamera();
-            } else {
-                startCamera();
-            }
-        }
-
-        async function startCamera() {
-            dismissCameraError();
-            if (!pose) initPoseDetector();
-
-            // Check if context is secure or camera API exists
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                const isSecure = window.isSecureContext;
-                let errMsg = "當前環境不支援直接調用鏡頭。";
-                if (!isSecure) {
-                    errMsg = "網頁並非透過安全連線 (HTTPS) 載入，瀏覽器基於安全性考量禁止存取攝影鏡頭。";
-                } else {
-                    errMsg = "預覽視窗 (iframe) 未具備相機存取權限 (allow='camera')。";
-                }
-                showCameraError(new Error(errMsg));
-                return;
-            }
-
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 640 },
-                        height: { ideal: 480 },
-                        facingMode: 'user'
-                    },
-                    audio: false
-                });
-
-                videoElement.srcObject = stream;
-                await videoElement.play();
-
-                isCameraActive = true;
-                processVideoFrame();
-
-                cameraPlaceholder.classList.add('hidden');
-                videoElement.classList.remove('hidden');
-                liveStatusBadge.classList.remove('hidden');
-                dynamicFormTip.classList.remove('hidden');
-                document.getElementById('camBtnText').innerText = "關閉鏡頭";
-
-                speak("鏡頭啟動成功，請側躺於瑜伽墊上", true);
-
-            } catch (err) {
-                console.error("Camera access error:", err);
-                showCameraError(err);
-                stopCamera();
-            }
-        }
-
-        async function processVideoFrame() {
-            if (!isCameraActive || !pose) return;
-
-            if (videoElement.readyState >= 2) {
-                try {
-                    await pose.send({ image: videoElement });
-                } catch (e) {
-                    console.warn("Frame detection error:", e);
-                }
-            }
-
-            if (isCameraActive) {
-                animationFrameId = requestAnimationFrame(processVideoFrame);
-            }
-        }
-
-        function showCameraError(err) {
-            const errorBox = document.getElementById('cameraErrorBox');
-            const errorTitle = document.getElementById('camErrorTitle');
-            const errorMessage = document.getElementById('camErrorMessage');
-
-            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                errorTitle.innerText = "相機存取權限被拒絕";
-                errorMessage.innerText = "請點擊網址列旁的鎖頭圖示開啟相機權限後重試。";
-            } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-                errorTitle.innerText = "未偵測到相機設備";
-                errorMessage.innerText = "請確認攝影鏡頭已正確連接至電腦或手機。";
-            } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-                errorTitle.innerText = "鏡頭正被其他程式占用";
-                errorMessage.innerText = "請先關閉其他正使用鏡頭的視訊軟體 (Line, Zoom, Meet 等)。";
-            } else {
-                errorTitle.innerText = "無法啟動鏡頭";
-                errorMessage.innerText = err.message || "預覽環境限制了鏡頭調用。";
-            }
-
-            errorBox.classList.remove('hidden');
-        }
-
-        function dismissCameraError() {
-            document.getElementById('cameraErrorBox').classList.add('hidden');
-        }
-
-        function stopCamera() {
-            isCameraActive = false;
-
-            if (animationFrameId) {
-                cancelAnimationFrame(animationFrameId);
-                animationFrameId = null;
-            }
-
-            if (videoElement.srcObject) {
-                const stream = videoElement.srcObject;
-                const tracks = stream.getTracks();
-                tracks.forEach(track => track.stop());
-                videoElement.srcObject = null;
-            }
-
-            cameraPlaceholder.classList.remove('hidden');
-            videoElement.classList.add('hidden');
-            liveStatusBadge.classList.add('hidden');
-            dynamicFormTip.classList.add('hidden');
-
-            document.getElementById('camBtnText').innerText = "開啟鏡頭";
-        }
-
         function onResults(results) {
+            canvasElement.width = videoElement.videoWidth || 640;
+            canvasElement.height = videoElement.videoHeight || 480;
+
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-            // Resize canvas resolution
-            if (canvasElement.width !== videoElement.videoWidth) {
-                canvasElement.width = videoElement.videoWidth || 640;
-                canvasElement.height = videoElement.videoHeight || 480;
-            }
-
-            if (results.image) {
-                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-            }
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
             if (results.poseLandmarks) {
-                // Draw skeleton connectivities
-                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#3b82f6', lineWidth: 3 });
-                drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#60a5fa', lineWidth: 2, radius: 4 });
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#10B981', lineWidth: 3});
+                drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#F59E0B', lineWidth: 1, radius: 3});
 
-                const landmarks = results.poseLandmarks;
+                const lm = results.poseLandmarks;
+                const shoulder = lm[11];
+                const hip = lm[23];
+                const knee = lm[25];
 
-                // Determine side facing the camera (left vs right shoulder visibility)
-                const leftVis = landmarks[11].visibility || 0;
-                const rightVis = landmarks[12].visibility || 0;
+                const torsoAngle = calculateAngle(shoulder, hip, knee);
 
-                let shoulder, hip, knee, ankle;
-                if (leftVis > rightVis) {
-                    shoulder = landmarks[11];
-                    hip = landmarks[23];
-                    knee = landmarks[25];
-                    ankle = landmarks[27];
+                const isFlat = torsoAngle >= 160;
+                const isLifted = torsoAngle <= 135;
+
+                if (isFlat) {
+                    checkFlat.classList.add('check-active');
                 } else {
-                    shoulder = landmarks[12];
-                    hip = landmarks[24];
-                    knee = landmarks[26];
-                    ankle = landmarks[28];
+                    checkFlat.classList.remove('check-active');
                 }
 
-                if (shoulder && hip && knee && ankle) {
-                    // Compute angles
-                    currentKneeAngle = Math.round(calculateAngle(hip, knee, ankle));
-                    currentTorsoAngle = Math.round(calculateAngle(shoulder, hip, knee));
+                if (isLifted) {
+                    checkHeight.classList.add('check-active');
+                } else {
+                    checkHeight.classList.remove('check-active');
+                }
 
-                    document.getElementById('kneeAngleVal').innerText = `${currentKneeAngle}°`;
-                    document.getElementById('torsoAngleVal').innerText = `${currentTorsoAngle}°`;
-
-                    // Knee angle icon feedback (purely display reference)
-                    const ruleKneeIcon = document.getElementById('ruleKneeIcon');
-                    ruleKneeIcon.className = "p-1.5 rounded-lg bg-blue-500/20 text-blue-400";
-
-                    // Form check on Lift Height (Torso angle representing 15-30cm shoulder lift)
-                    const ruleLiftIcon = document.getElementById('ruleLiftIcon');
-                    const isLiftValid = (currentTorsoAngle <= 105 && currentTorsoAngle >= 65);
-                    if (isLiftValid) {
-                        ruleLiftIcon.className = "p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400";
-                    } else if (currentTorsoAngle > 105) {
-                        ruleLiftIcon.className = "p-1.5 rounded-lg bg-slate-800 text-slate-400";
+                if (stage === "flat" && isLifted) {
+                    stage = "up";
+                    statusEl.innerText = "動作：向上捲腹中";
+                } else if (stage === "up" && isFlat) {
+                    stage = "flat";
+                    if (isTesting) {
+                        count++;
+                        counterEl.innerText = count;
                     }
-
-                    // Process State Machine
-                    processSitUpStateMachine(currentTorsoAngle, currentKneeAngle);
+                    statusEl.innerText = "動作：已完成 1 次，請保持";
                 }
             }
             canvasCtx.restore();
         }
 
-        function processSitUpStateMachine(torsoAngle, kneeAngle) {
-            const DOWN_THRESHOLD = 135; // 平躺於墊上判定門檻
-            const UP_THRESHOLD = 105;   // 上身離地約 15-30 公分判定門檻
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        pose.onResults(onResults);
 
-            // Lock counting if timer finished in timer mode
-            if (currentMode === 'timer' && timerSeconds <= 0) {
-                updateStatus('1分鐘測驗結束！請查看體能報告', 'emerald');
-                return;
-            }
+        async function initCamera() {
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: false
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoElement.srcObject = stream;
+                
+                await new Promise((resolve) => {
+                    videoElement.onloadedmetadata = () => {
+                        videoElement.play();
+                        resolve();
+                    };
+                });
 
-            // Auto start timer if exercise begins in timer mode
-            if (currentMode === 'timer' && !isTimerRunning && timerSeconds === TOTAL_TIMER_DURATION && torsoAngle < UP_THRESHOLD + 15) {
-                start1MinTimer();
-            }
+                statusEl.innerText = "系統就緒，準備開始檢測";
 
-            switch (sitUpState) {
-                case 'DOWN':
-                    updateStatus('預備姿勢：請平躺於瑜伽墊上', 'amber');
-                    // 當平躺回原位時，重置動作檢測標記
-                    hasReachedValidUp = false;
-                    
-                    if (torsoAngle < UP_THRESHOLD + 15) {
-                        sitUpState = 'GOING_UP';
+                async function renderFrame() {
+                    if (videoElement.readyState >= 2) {
+                        await pose.send({image: videoElement});
                     }
-                    break;
+                    requestAnimationFrame(renderFrame);
+                }
+                renderFrame();
 
-                case 'GOING_UP':
-                    updateStatus('向上捲腹中... 肩膀離地 15-30 cm', 'blue');
-
-                    if (torsoAngle <= UP_THRESHOLD) {
-                        sitUpState = 'UP';
-                        hasReachedValidUp = true;
-                        speak("頂峰收緊");
-                        updateFormTip("達到標準離地高度！腹部收緊", "text-emerald-400");
-                    } else if (torsoAngle > DOWN_THRESHOLD) {
-                        sitUpState = 'DOWN';
-                        speak("高度不足");
-                        updateFormTip("無效動作：離地高度不足 15-30 公分！", "text-red-400");
-                    }
-                    break;
-
-                case 'UP':
-                    updateStatus('頂峰收縮：腹部收緊，控制力量緩慢躺回原位', 'emerald');
-
-                    if (torsoAngle > UP_THRESHOLD + 10) {
-                        sitUpState = 'GOING_DOWN';
-                    }
-                    break;
-
-                case 'GOING_DOWN':
-                    updateStatus('緩慢躺回原位，確保平躺觸墊', 'blue');
-
-                    if (torsoAngle >= DOWN_THRESHOLD) {
-                        // 必須符合：平躺出發 -> 抬起離地15-30cm -> 躺回墊上
-                        if (hasReachedValidUp) {
-                            count++;
-                            repCountDisplay.innerText = count;
-                            updateProgress();
-                            speak(`${count}`);
-                            updateFormTip(`標準動作！完成第 ${count} 次！`, "text-emerald-400");
-                        } else {
-                            speak("高度不足，不予計數");
-                            updateFormTip("不予計數：上身離地高度不足 15-30 公分！", "text-red-400");
-                        }
-                        sitUpState = 'DOWN';
-                    }
-                    break;
+            } catch (err) {
+                console.error("Camera Error: ", err);
+                // GitHub Pages 環境下的直觀錯誤提示
+                statusEl.innerText = "無法存取相機，請確認瀏覽器已允許此網站使用相機權限。";
             }
         }
 
-        function switchMode(mode) {
-            currentMode = mode;
-            const modeTargetBtn = document.getElementById('modeTargetBtn');
-            const modeTimerBtn = document.getElementById('modeTimerBtn');
-            const targetModeBox = document.getElementById('targetModeBox');
-            const timerModeBox = document.getElementById('timerModeBox');
-            const progressBarContainer = document.getElementById('progressBarContainer');
-            const timerBarContainer = document.getElementById('timerBarContainer');
-            const startTimerBtn = document.getElementById('startTimerBtn');
+        window.addEventListener('DOMContentLoaded', () => {
+            initCamera();
+        });
 
-            if (mode === 'target') {
-                modeTargetBtn.className = "py-2.5 rounded-lg bg-blue-600 text-white shadow flex items-center justify-center gap-1.5 transition";
-                modeTimerBtn.className = "py-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center gap-1.5 transition";
-                targetModeBox.classList.remove('hidden');
-                timerModeBox.classList.add('hidden');
-                progressBarContainer.classList.remove('hidden');
-                timerBarContainer.classList.add('hidden');
-                startTimerBtn.classList.add('hidden');
-                stop1MinTimer();
-                resetCounter();
+        // --- Screen Wake Lock API 邏輯 ---
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('Screen Wake Lock 啟動：保持螢幕恆亮');
+                }
+            } catch (err) {
+                console.warn(`Wake Lock error: ${err.name}, ${err.message}`);
+            }
+        }
+
+        async function releaseWakeLock() {
+            if (wakeLock !== null) {
+                await wakeLock.release();
+                wakeLock = null;
+                console.log('Screen Wake Lock 解除：恢復正常休眠');
+            }
+        }
+
+        // 當頁面切換到背景再回到前景時，若正在測試則重新喚醒螢幕
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible' && isTesting) {
+                await requestWakeLock();
+            }
+        });
+        // -------------------------------
+
+        function toggleTest() {
+            if (!isTesting) {
+                startTest();
             } else {
-                modeTargetBtn.className = "py-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center gap-1.5 transition";
-                modeTimerBtn.className = "py-2.5 rounded-lg bg-amber-600 text-white shadow flex items-center justify-center gap-1.5 transition";
-                targetModeBox.classList.add('hidden');
-                timerModeBox.classList.remove('hidden');
-                progressBarContainer.classList.add('hidden');
-                timerBarContainer.classList.remove('hidden');
-                startTimerBtn.classList.remove('hidden');
-                resetCounter();
-                speak("切換至一分鐘體能測驗模式，點擊開始測驗", true);
+                stopTest();
             }
         }
 
-        function updateTarget() {
-            const select = document.getElementById('targetSelect');
-            targetReps = parseInt(select.value, 10);
-            updateProgress();
-        }
+        function startTest() {
+            isTesting = true;
+            count = 0;
+            timeLeft = 60;
+            counterEl.innerText = count;
+            timerEl.innerText = `${timeLeft}s`;
+            document.getElementById('test-btn').innerText = "結束測驗";
+            document.getElementById('rec-status').classList.remove('hidden');
 
-        function toggleTimerChallenge() {
-            if (isTimerRunning) {
-                stop1MinTimer();
-                speak("測驗已暫停");
-            } else {
-                start1MinTimer();
-            }
-        }
-
-        function start1MinTimer() {
-            if (timerSeconds <= 0) {
-                timerSeconds = TOTAL_TIMER_DURATION;
-                count = 0;
-                repCountDisplay.innerText = count;
-            }
-
-            isTimerRunning = true;
-            updateTimerUI();
-
-            // Start video recording stream
+            requestWakeLock(); // 測驗開始，保持螢幕喚醒
             startRecording();
 
-            const timerBtnText = document.getElementById('timerBtnText');
-            const timerBtnIcon = document.getElementById('timerBtnIcon');
-            timerBtnText.innerText = "暫停 1 分鐘測驗";
-            timerBtnIcon.setAttribute('data-lucide', 'pause');
-            lucide.createIcons();
-
-            speak("一分鐘體能測驗開始！加油！", true);
-
-            if (timerInterval) clearInterval(timerInterval);
             timerInterval = setInterval(() => {
-                timerSeconds--;
-                updateTimerUI();
-
-                if (timerSeconds === 30) {
-                    speak("時間過了一半，繼續保持！");
-                } else if (timerSeconds === 10) {
-                    speak("最後 10 秒！衝刺！");
-                } else if (timerSeconds <= 0) {
-                    finish1MinTimer();
+                timeLeft--;
+                timerEl.innerText = `${timeLeft}s`;
+                if (timeLeft <= 0) {
+                    stopTest();
                 }
             }, 1000);
         }
 
-        function stop1MinTimer() {
-            isTimerRunning = false;
-            if (timerInterval) clearInterval(timerInterval);
-
-            // Stop recording
-            stopRecording();
-
-            const timerBtnText = document.getElementById('timerBtnText');
-            const timerBtnIcon = document.getElementById('timerBtnIcon');
-            if (timerBtnText) timerBtnText.innerText = "繼續 1 分鐘測驗";
-            if (timerBtnIcon) timerBtnIcon.setAttribute('data-lucide', 'play');
-            lucide.createIcons();
-        }
-
-        function finish1MinTimer() {
-            stop1MinTimer();
-            speak(`時間到！測驗結束！您在一分鐘內完成了 ${count} 次！`, true);
-
-            confetti({
-                particleCount: 120,
-                spread: 80,
-                origin: { y: 0.6 }
-            });
-
-            document.getElementById('resultReps').innerText = count;
-            document.getElementById('resultSpeed').innerText = count;
-
-            const ratingBox = document.getElementById('ratingBox');
-            if (count >= 35) {
-                ratingBox.innerText = "體能評語：體能極佳！核心力量表現非常紮實！";
-                ratingBox.className = "p-3 rounded-xl bg-emerald-900/30 border border-emerald-500/40 text-emerald-300 text-xs font-semibold";
-            } else if (count >= 25) {
-                ratingBox.innerText = "體能評語：體能良好！動作標準且富有耐力！";
-                ratingBox.className = "p-3 rounded-xl bg-blue-900/30 border border-blue-500/40 text-blue-300 text-xs font-semibold";
-            } else if (count >= 15) {
-                ratingBox.innerText = "體能評語：達到標準體能水準，持續練習將更上一層樓！";
-                ratingBox.className = "p-3 rounded-xl bg-amber-900/30 border border-amber-500/40 text-amber-300 text-xs font-semibold";
-            } else {
-                ratingBox.innerText = "體能評語：再接再勵！建議每天定時鍛鍊核心肌肉。";
-                ratingBox.className = "p-3 rounded-xl bg-purple-900/30 border border-purple-500/40 text-purple-300 text-xs font-semibold";
-            }
-
-            // Hide old video previews until new encoding completes
-            const videoPreview = document.getElementById('resultVideoPreview');
-            const downloadBtn = document.getElementById('downloadVideoBtn');
-            if (videoPreview) videoPreview.classList.add('hidden');
-            if (downloadBtn) downloadBtn.classList.add('hidden');
-
-            document.getElementById('resultModal').classList.remove('hidden');
-        }
-
-        function closeResultModal() {
-            document.getElementById('resultModal').classList.add('hidden');
-        }
-
-        function updateTimerUI() {
-            const minutes = Math.floor(Math.max(0, timerSeconds) / 60);
-            const seconds = Math.max(0, timerSeconds) % 60;
-            const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        function stopTest() {
+            isTesting = false;
+            clearInterval(timerInterval);
+            document.getElementById('test-btn').innerText = "開始 1 分鐘體能測驗";
+            document.getElementById('rec-status').classList.add('hidden');
             
-            const timerDisplay = document.getElementById('timerDisplay');
-            if (timerDisplay) timerDisplay.innerText = timeStr;
-
-            const timerPercent = document.getElementById('timerPercent');
-            const timerBar = document.getElementById('timerBar');
-            const pct = Math.max(0, Math.round((timerSeconds / TOTAL_TIMER_DURATION) * 100));
-
-            if (timerPercent) timerPercent.innerText = pct + '%';
-            if (timerBar) timerBar.style.width = pct + '%';
+            releaseWakeLock(); // 測驗結束，允許螢幕休眠
+            stopRecording();
         }
 
-        function resetCounter() {
-            count = 0;
-            repCountDisplay.innerText = count;
-            updateProgress();
-            stop1MinTimer();
-            timerSeconds = TOTAL_TIMER_DURATION;
-            updateTimerUI();
+        function startRecording() {
+            recordedChunks = [];
+            let options = { mimeType: 'video/webm' };
+            if (!MediaRecorder.isTypeSupported('video/webm')) {
+                options = { mimeType: 'video/mp4' };
+            }
 
-            const timerBtnText = document.getElementById('timerBtnText');
-            if (timerBtnText) timerBtnText.innerText = "開始 1 分鐘測驗";
+            try {
+                const stream = canvasElement.captureStream(30);
+                mediaRecorder = new MediaRecorder(stream, options);
 
-            sitUpState = 'DOWN';
-            updateStatus('請側躺於瑜伽墊上準備', 'amber');
-            speak("計數已重置，準備開始", true);
-        }
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) recordedChunks.push(e.data);
+                };
 
-        function updateProgress() {
-            if (currentMode === 'target') {
-                const pct = Math.min(Math.round((count / targetReps) * 100), 100);
-                progressBar.style.width = pct + '%';
-                progressPercent.innerText = pct + '%';
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: options.mimeType });
+                    const videoURL = URL.createObjectURL(blob);
+                    document.getElementById('recorded-video').src = videoURL;
+                    document.getElementById('download-btn').href = videoURL;
+                    document.getElementById('download-btn').download = `situp_test_${new Date().getTime()}.${options.mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
+                    
+                    document.getElementById('final-count').innerText = count;
+                    document.getElementById('result-modal').classList.remove('hidden');
+                };
 
-                if (count >= targetReps && count > 0) {
-                    confetti({
-                        particleCount: 100,
-                        spread: 70,
-                        origin: { y: 0.6 }
-                    });
-                    speak(`太棒了！已完成目標 ${targetReps} 次！`, true);
-                }
+                mediaRecorder.start();
+            } catch (e) {
+                console.warn("錄影功能受限: ", e);
             }
         }
 
-        function updateStatus(text, color) {
-            statusText.innerText = text;
-            if (color === 'emerald') {
-                statusDot.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse";
-            } else if (color === 'blue') {
-                statusDot.className = "w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse";
-            } else {
-                statusDot.className = "w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse";
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
             }
         }
 
-        function updateFormTip(text, colorClass) {
-            formTipText.innerText = text;
-            formTipText.className = `${colorClass} font-medium`;
+        function closeModal() {
+            document.getElementById('result-modal').classList.add('hidden');
         }
     </script>
 </body>
