@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>仰臥起坐 AI 體能測驗</title>
+    <!-- MediaPipe Pose -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        .check-active {
+            background-color: #10B981 !important;
+            border-color: #10B981 !important;
+            color: #FFFFFF !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+    <div id="app-container" class="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-center border-b border-slate-800 pb-4">
+            <h1 class="text-xl md:text-2xl font-bold text-emerald-400 flex items-center gap-2">
+                <i data-lucide="activity"></i> 仰臥起坐 AI 檢測系統
+            </h1>
+            <div id="rec-status" class="hidden flex items-center gap-2 bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs font-semibold animate-pulse">
+                <span class="w-2 h-2 rounded-full bg-red-500"></span> REC 錄影中
+            </div>
+        </header>
+
+        <!-- Top Dashboard -->
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50">
+                <p class="text-xs text-slate-400 mb-1">完成次數</p>
+                <p id="counter" class="text-3xl font-extrabold text-emerald-400">0</p>
+            </div>
+            <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50">
+                <p class="text-xs text-slate-400 mb-1">倒數計時器</p>
+                <p id="timer" class="text-3xl font-extrabold text-amber-400">60s</p>
+            </div>
+            <div class="col-span-2 md:col-span-1 bg-slate-800/80 p-4 rounded-xl border border-slate-700/50 flex flex-col justify-center">
+                <button id="test-btn" onclick="toggleTest()" class="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2 opacity-50 cursor-not-allowed" disabled>
+                    <i data-lucide="play"></i> 請先啟動相機
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Video and Skeleton View -->
+        <div class="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 aspect-video flex items-center justify-center">
+            
+            <!-- 手動啟動按鈕遮罩層 -->
+            <div id="start-camera-overlay" class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm">
+                <p class="text-slate-300 mb-4 text-sm text-center px-4">iOS 系統需要您點擊下方按鈕來授權相機</p>
+                <button onclick="startCameraManual()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-blue-500/30">
+                    <i data-lucide="camera"></i> 點擊授權並啟動相機
+                </button>
+            </div>
+
+            <!-- 視訊標籤 (加入 iOS 相容屬性) -->
+            <video id="webcam" playsinline webkit-playsinline muted autoplay class="hidden"></video>
+            <canvas id="output_canvas" class="w-full h-full object-contain"></canvas>
+            
+            <div id="status-overlay" class="absolute top-4 left-4 z-10 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-medium text-slate-300 hidden">
+                等待相機啟動...
+            </div>
+        </div>
+
+        <!-- Movement Quality Analysis Dashboard -->
+        <div class="bg-slate-800/80 p-5 rounded-2xl border border-slate-700/50 space-y-3">
+            <h2 class="text-sm font-semibold text-slate-400 tracking-wider uppercase flex items-center gap-2">
+                <i data-lucide="check-circle-2"></i> 即時動作品質分析
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="flex items-center justify-between p-3.5 bg-slate-900/60 rounded-xl border border-slate-800">
+                    <div class="flex items-center gap-3">
+                        <div id="check-flat" class="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center transition-all duration-200">
+                            <i data-lucide="check" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold text-slate-200">身體平躺於瑜伽墊</p>
+                            <p class="text-xs text-slate-500">起點與終點軀幹完全平躺</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between p-3.5 bg-slate-900/60 rounded-xl border border-slate-800">
+                    <div class="flex items-center gap-3">
+                        <div id="check-height" class="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center transition-all duration-200">
+                            <i data-lucide="check" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-semibold text-slate-200">起身離地高度 (15-30 cm)</p>
+                            <p class="text-xs text-slate-500">肩膀完整拉起腹部收緊</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Download Modal -->
+    <div id="result-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4">
+            <h3 class="text-xl font-bold text-emerald-400">測驗結束！</h3>
+            <p class="text-sm text-slate-300">您在 1 分鐘內共完成了 <span id="final-count" class="text-emerald-400 font-bold text-lg">0</span> 次標準仰臥起坐。</p>
+            <div class="aspect-video bg-black rounded-lg overflow-hidden border border-slate-800">
+                <video id="recorded-video" playsinline webkit-playsinline controls class="w-full h-full object-contain"></video>
+            </div>
+            <div class="flex gap-3">
+                <a id="download-btn" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-center transition-all flex items-center justify-center gap-2 cursor-pointer">
+                    <i data-lucide="download"></i> 下載測驗影片
+                </a>
+                <button onclick="closeModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 px-4 rounded-xl transition-all">
+                    關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const counterEl = document.getElementById('counter');
+        const timerEl = document.getElementById('timer');
+        const statusEl = document.getElementById('status-overlay');
+        const checkFlat = document.getElementById('check-flat');
+        const checkHeight = document.getElementById('check-height');
+        const testBtn = document.getElementById('test-btn');
+
+        let count = 0;
+        let isTesting = false;
+        let timeLeft = 60;
+        let timerInterval = null;
+        let stage = "flat"; 
+        
+        let mediaRecorder;
+        let recordedChunks = [];
+        let isCameraReady = false;
+
+        function calculateAngle(a, b, c) {
+            const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+            let angle = Math.abs((radians * 180.0) / Math.PI);
+            if (angle > 180.0) angle = 360 - angle;
+            return angle;
+        }
+
+        function onResults(results) {
+            canvasElement.width = videoElement.videoWidth || 640;
+            canvasElement.height = videoElement.videoHeight || 480;
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.poseLandmarks) {
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#10B981', lineWidth: 3});
+                drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#F59E0B', lineWidth: 1, radius: 3});
+
+                const lm = results.poseLandmarks;
+                const shoulder = lm[11];
+                const hip = lm[23];
+                const knee = lm[25];
+
+                const torsoAngle = calculateAngle(shoulder, hip, knee);
+
+                const isFlat = torsoAngle >= 160;
+                const isLifted = torsoAngle <= 135;
+
+                if (isFlat) checkFlat.classList.add('check-active');
+                else checkFlat.classList.remove('check-active');
+
+                if (isLifted) checkHeight.classList.add('check-active');
+                else checkHeight.classList.remove('check-active');
+
+                if (stage === "flat" && isLifted) {
+                    stage = "up";
+                    statusEl.innerText = "動作：向上捲腹中";
+                } else if (stage === "up" && isFlat) {
+                    stage = "flat";
+                    if (isTesting) {
+                        count++;
+                        counterEl.innerText = count;
+                    }
+                    statusEl.innerText = "動作：已完成 1 次，請保持";
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        pose.onResults(onResults);
+
+        // 手動啟動相機函數
+        function startCameraManual() {
+            document.getElementById('start-camera-overlay').classList.add('hidden');
+            statusEl.classList.remove('hidden');
+            statusEl.innerText = "請求相機權限中...";
+            initCamera();
+        }
+
+        async function initCamera() {
+            try {
+                const constraints = {
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoElement.srcObject = stream;
+                
+                await new Promise((resolve) => {
+                    videoElement.onloadedmetadata = () => {
+                        videoElement.play();
+                        resolve();
+                    };
+                });
+
+                statusEl.innerText = "系統就緒，請點擊開始測驗";
+                isCameraReady = true;
+                
+                // 啟用測驗按鈕
+                testBtn.disabled = false;
+                testBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                testBtn.innerHTML = '<i data-lucide="play"></i> 開始 1 分鐘體能測驗';
+                lucide.createIcons();
+
+                async function renderFrame() {
+                    if (videoElement.readyState >= 2) {
+                        await pose.send({image: videoElement});
+                    }
+                    requestAnimationFrame(renderFrame);
+                }
+                renderFrame();
+
+            } catch (err) {
+                console.error("Camera Error: ", err);
+                statusEl.innerText = "相機啟動失敗，請重新整理頁面並允許權限";
+                document.getElementById('start-camera-overlay').classList.remove('hidden');
+            }
+        }
+
+        function toggleTest() {
+            if (!isCameraReady) return;
+            if (!isTesting) startTest();
+            else stopTest();
+        }
+
+        function startTest() {
+            isTesting = true;
+            count = 0;
+            timeLeft = 60;
+            counterEl.innerText = count;
+            timerEl.innerText = `${timeLeft}s`;
+            testBtn.innerHTML = '<i data-lucide="square"></i> 結束測驗';
+            testBtn.classList.replace('bg-emerald-500', 'bg-red-500');
+            testBtn.classList.replace('hover:bg-emerald-600', 'hover:bg-red-600');
+            document.getElementById('rec-status').classList.remove('hidden');
+            lucide.createIcons();
+
+            startRecording();
+
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                timerEl.innerText = `${timeLeft}s`;
+                if (timeLeft <= 0) stopTest();
+            }, 1000);
+        }
+
+        function stopTest() {
+            isTesting = false;
+            clearInterval(timerInterval);
+            testBtn.innerHTML = '<i data-lucide="play"></i> 開始 1 分鐘體能測驗';
+            testBtn.classList.replace('bg-red-500', 'bg-emerald-500');
+            testBtn.classList.replace('hover:bg-red-600', 'hover:bg-emerald-600');
+            document.getElementById('rec-status').classList.add('hidden');
+            lucide.createIcons();
+            
+            stopRecording();
+        }
+
+        function startRecording() {
+            recordedChunks = [];
+            
+            let options;
+            if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+                options = { mimeType: 'video/webm;codecs=vp9' };
+            } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+                options = { mimeType: 'video/webm;codecs=vp8' };
+            } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+                options = { mimeType: 'video/mp4' };
+            } else {
+                options = { mimeType: '' };
+            }
+
+            try {
+                const stream = canvasElement.captureStream(30);
+                mediaRecorder = new MediaRecorder(stream, options);
+
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) recordedChunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    const ext = (options.mimeType && options.mimeType.includes('mp4')) ? 'mp4' : 'webm';
+                    const blob = new Blob(recordedChunks, { type: options.mimeType || 'video/webm' });
+                    const videoURL = URL.createObjectURL(blob);
+                    document.getElementById('recorded-video').src = videoURL;
+                    document.getElementById('download-btn').href = videoURL;
+                    document.getElementById('download-btn').download = `situp_test_${new Date().getTime()}.${ext}`;
+                    
+                    document.getElementById('final-count').innerText = count;
+                    document.getElementById('result-modal').classList.remove('hidden');
+                };
+
+                mediaRecorder.start();
+            } catch (e) {
+                console.warn("錄影功能受限: ", e);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('result-modal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
