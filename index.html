@@ -17,6 +17,19 @@
             border-color: #10B981 !important;
             color: #FFFFFF !important;
         }
+        /* iOS 相容：不可使用 display:none，改用視覺隱藏 */
+        .ios-hidden-video {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0.01;
+            pointer-events: none;
+            z-index: -1;
+        }
+        /* 切換鏡頭的平滑過渡 */
+        #output_canvas {
+            transition: transform 0.3s ease;
+        }
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
@@ -50,21 +63,27 @@
         </div>
 
         <!-- Main Video and Skeleton View -->
-        <div class="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 aspect-video flex items-center justify-center">
+        <div class="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 aspect-video flex items-center justify-center shadow-lg">
             
+            <!-- 鏡頭切換按鈕 (預設隱藏，相機啟動後顯示) -->
+            <button id="switch-camera-btn" onclick="switchCamera()" class="absolute top-4 right-4 z-30 bg-slate-900/80 backdrop-blur-md p-2.5 rounded-xl border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-all hidden shadow-lg" title="切換鏡頭">
+                <i data-lucide="switch-camera"></i>
+            </button>
+
             <!-- 手動啟動按鈕遮罩層 -->
             <div id="start-camera-overlay" class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm">
-                <p class="text-slate-300 mb-4 text-sm text-center px-4">iOS 系統需要您點擊下方按鈕來授權相機</p>
+                <p class="text-slate-300 mb-4 text-sm text-center px-4">請點擊下方按鈕以啟用相機</p>
                 <button onclick="startCameraManual()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-blue-500/30">
                     <i data-lucide="camera"></i> 點擊授權並啟動相機
                 </button>
             </div>
 
-            <!-- 視訊標籤 (加入 iOS 相容屬性) -->
-            <video id="webcam" playsinline webkit-playsinline muted autoplay class="hidden"></video>
-            <canvas id="output_canvas" class="w-full h-full object-contain"></canvas>
+            <!-- iOS 影片標籤 -->
+            <video id="webcam" playsinline webkit-playsinline muted autoplay class="ios-hidden-video"></video>
+            <canvas id="output_canvas" class="w-full h-full object-contain z-10"></canvas>
             
-            <div id="status-overlay" class="absolute top-4 left-4 z-10 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-medium text-slate-300 hidden">
+            <!-- 狀態文字 -->
+            <div id="status-overlay" class="absolute top-4 left-4 z-30 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700 text-xs font-medium text-slate-300 hidden transition-opacity">
                 等待相機啟動...
             </div>
         </div>
@@ -109,6 +128,7 @@
             <h3 class="text-xl font-bold text-emerald-400">測驗結束！</h3>
             <p class="text-sm text-slate-300">您在 1 分鐘內共完成了 <span id="final-count" class="text-emerald-400 font-bold text-lg">0</span> 次標準仰臥起坐。</p>
             <div class="aspect-video bg-black rounded-lg overflow-hidden border border-slate-800">
+                <!-- 錄影回放加上鏡像樣式支援 -->
                 <video id="recorded-video" playsinline webkit-playsinline controls class="w-full h-full object-contain"></video>
             </div>
             <div class="flex gap-3">
@@ -134,6 +154,7 @@
         const checkFlat = document.getElementById('check-flat');
         const checkHeight = document.getElementById('check-height');
         const testBtn = document.getElementById('test-btn');
+        const switchBtn = document.getElementById('switch-camera-btn');
 
         let count = 0;
         let isTesting = false;
@@ -144,6 +165,9 @@
         let mediaRecorder;
         let recordedChunks = [];
         let isCameraReady = false;
+        
+        // 鏡頭狀態管理：預設為後置鏡頭
+        let currentFacingMode = 'environment'; 
 
         function calculateAngle(a, b, c) {
             const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
@@ -182,14 +206,14 @@
 
                 if (stage === "flat" && isLifted) {
                     stage = "up";
-                    statusEl.innerText = "動作：向上捲腹中";
+                    if(isTesting) showStatus("向上捲腹中");
                 } else if (stage === "up" && isFlat) {
                     stage = "flat";
                     if (isTesting) {
                         count++;
                         counterEl.innerText = count;
+                        showStatus("已完成 " + count + " 次");
                     }
-                    statusEl.innerText = "動作：已完成 1 次，請保持";
                 }
             }
             canvasCtx.restore();
@@ -206,18 +230,44 @@
         });
         pose.onResults(onResults);
 
+        function showStatus(text, hideAfter = 2000) {
+            statusEl.innerText = text;
+            statusEl.classList.remove('hidden');
+            if(hideAfter > 0) {
+                setTimeout(() => { if (!isTesting || text.includes("完成")) statusEl.classList.add('hidden'); }, hideAfter);
+            }
+        }
+
         // 手動啟動相機函數
         function startCameraManual() {
             document.getElementById('start-camera-overlay').classList.add('hidden');
-            statusEl.classList.remove('hidden');
-            statusEl.innerText = "請求相機權限中...";
+            showStatus("請求相機權限中...", 0);
             initCamera();
+        }
+
+        // 切換前後鏡頭
+        async function switchCamera() {
+            if (isTesting) {
+                alert("測驗進行中，請先結束測驗再切換鏡頭！");
+                return;
+            }
+
+            // 切換模式
+            currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+            showStatus("切換鏡頭中...", 0);
+
+            // 關閉當前鏡頭的串流
+            if (videoElement.srcObject) {
+                videoElement.srcObject.getTracks().forEach(track => track.stop());
+            }
+
+            await initCamera();
         }
 
         async function initCamera() {
             try {
                 const constraints = {
-                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                    video: { facingMode: currentFacingMode, width: { ideal: 640 }, height: { ideal: 480 } },
                     audio: false
                 };
                 
@@ -231,26 +281,36 @@
                     };
                 });
 
-                statusEl.innerText = "系統就緒，請點擊開始測驗";
-                isCameraReady = true;
+                // 處理前置鏡頭的鏡像翻轉
+                if (currentFacingMode === 'user') {
+                    canvasElement.style.transform = 'scaleX(-1)';
+                } else {
+                    canvasElement.style.transform = 'scaleX(1)';
+                }
+
+                showStatus(currentFacingMode === 'user' ? "使用前置鏡頭 (鏡像)" : "使用後置鏡頭");
                 
-                // 啟用測驗按鈕
+                switchBtn.classList.remove('hidden'); // 顯示切換按鈕
                 testBtn.disabled = false;
                 testBtn.classList.remove('opacity-50', 'cursor-not-allowed');
                 testBtn.innerHTML = '<i data-lucide="play"></i> 開始 1 分鐘體能測驗';
                 lucide.createIcons();
 
-                async function renderFrame() {
-                    if (videoElement.readyState >= 2) {
-                        await pose.send({image: videoElement});
+                // 確保只啟動一次影像渲染迴圈
+                if (!isCameraReady) {
+                    isCameraReady = true;
+                    async function renderFrame() {
+                        if (videoElement.readyState >= 2) {
+                            await pose.send({image: videoElement});
+                        }
+                        requestAnimationFrame(renderFrame);
                     }
-                    requestAnimationFrame(renderFrame);
+                    renderFrame();
                 }
-                renderFrame();
 
             } catch (err) {
                 console.error("Camera Error: ", err);
-                statusEl.innerText = "相機啟動失敗，請重新整理頁面並允許權限";
+                showStatus("相機啟動失敗，請允許權限", 0);
                 document.getElementById('start-camera-overlay').classList.remove('hidden');
             }
         }
@@ -271,6 +331,7 @@
             testBtn.classList.replace('bg-emerald-500', 'bg-red-500');
             testBtn.classList.replace('hover:bg-emerald-600', 'hover:bg-red-600');
             document.getElementById('rec-status').classList.remove('hidden');
+            switchBtn.classList.add('opacity-50', 'pointer-events-none'); // 測驗中禁用切換鏡頭
             lucide.createIcons();
 
             startRecording();
@@ -289,6 +350,8 @@
             testBtn.classList.replace('bg-red-500', 'bg-emerald-500');
             testBtn.classList.replace('hover:bg-red-600', 'hover:bg-emerald-600');
             document.getElementById('rec-status').classList.add('hidden');
+            switchBtn.classList.remove('opacity-50', 'pointer-events-none'); // 恢復切換鏡頭
+            statusEl.classList.add('hidden');
             lucide.createIcons();
             
             stopRecording();
@@ -298,18 +361,16 @@
             recordedChunks = [];
             
             let options;
-            if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
-                options = { mimeType: 'video/webm;codecs=vp9' };
-            } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-                options = { mimeType: 'video/webm;codecs=vp8' };
-            } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+            if (MediaRecorder.isTypeSupported('video/mp4')) {
                 options = { mimeType: 'video/mp4' };
+            } else if (MediaRecorder.isTypeSupported('video/webm')) {
+                options = { mimeType: 'video/webm' };
             } else {
                 options = { mimeType: '' };
             }
 
             try {
-                const stream = canvasElement.captureStream(30);
+                const stream = videoElement.srcObject;
                 mediaRecorder = new MediaRecorder(stream, options);
 
                 mediaRecorder.ondataavailable = (e) => {
@@ -318,9 +379,13 @@
 
                 mediaRecorder.onstop = () => {
                     const ext = (options.mimeType && options.mimeType.includes('mp4')) ? 'mp4' : 'webm';
-                    const blob = new Blob(recordedChunks, { type: options.mimeType || 'video/webm' });
+                    const blob = new Blob(recordedChunks, { type: options.mimeType || 'video/mp4' });
                     const videoURL = URL.createObjectURL(blob);
-                    document.getElementById('recorded-video').src = videoURL;
+                    
+                    const recVideo = document.getElementById('recorded-video');
+                    recVideo.src = videoURL;
+                    
+                    // 下載檔案
                     document.getElementById('download-btn').href = videoURL;
                     document.getElementById('download-btn').download = `situp_test_${new Date().getTime()}.${ext}`;
                     
