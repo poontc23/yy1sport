@@ -1,0 +1,16 @@
+{
+  "name": "仰臥起坐 AI 檢測系統",
+  "short_name": "AI 體能測驗",
+  "description": "運用 AI 技術進行即時仰臥起坐標準度檢測與計數。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Apple_logo_grey.svg/192px-Apple_logo_grey.svg.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
