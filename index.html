@@ -68,7 +68,7 @@
             <div class="relative bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex-1 min-h-[380px] sm:min-h-[480px] flex items-center justify-center">
                 
                 <!-- Video & Overlay Canvas -->
-                <video id="webcam" class="absolute inset-0 w-full h-full object-cover hidden" playsinline autoplay muted></video>
+                <video id="webcam" autocomplete="off" playsinline webkit-playsinline muted class="hidden"></video>
                 <canvas id="output_canvas" class="absolute inset-0 w-full h-full object-cover z-10"></canvas>
 
                 <!-- Camera Standby / Loading Placeholder -->
@@ -259,7 +259,6 @@
                                 <p class="text-[11px] text-slate-500">肩膀完整拉起腹部收緊</p>
                             </div>
                         </div>
-                        <span id="torsoAngleVal" class="text-xs font-mono font-bold text-slate-400">--°</span>
                     </div>
 
                     <!-- Rule 3: Neck Guard -->
@@ -591,4 +590,472 @@
                 smoothLandmarks: true,
                 enableSegmentation: false,
                 minDetectionConfidence: 0.5,
-                minTrackingConfi
+                minTrackingConfidence: 0.5
+            });
+
+            pose.onResults(onResults);
+        }
+
+        function toggleCamera() {
+            if (isCameraActive) {
+                stopCamera();
+            } else {
+                startCamera();
+            }
+        }
+
+        async function startCamera() {
+            dismissCameraError();
+            if (!pose) initPoseDetector();
+
+            // Check if context is secure or camera API exists
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                const isSecure = window.isSecureContext;
+                let errMsg = "當前環境不支援直接調用鏡頭。";
+                if (!isSecure) {
+                    errMsg = "網頁並非透過安全連線 (HTTPS) 載入，瀏覽器基於安全性考量禁止存取攝影鏡頭。";
+                } else {
+                    errMsg = "預覽視窗 (iframe) 未具備相機存取權限 (allow='camera')。";
+                }
+                showCameraError(new Error(errMsg));
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                videoElement.srcObject = stream;
+                await videoElement.play();
+
+                isCameraActive = true;
+                processVideoFrame();
+
+                cameraPlaceholder.classList.add('hidden');
+                videoElement.classList.remove('hidden');
+                liveStatusBadge.classList.remove('hidden');
+                dynamicFormTip.classList.remove('hidden');
+                document.getElementById('camBtnText').innerText = "關閉鏡頭";
+
+                speak("鏡頭啟動成功，請側躺於瑜伽墊上", true);
+
+            } catch (err) {
+                console.error("Camera access error:", err);
+                showCameraError(err);
+                stopCamera();
+            }
+        }
+
+        async function processVideoFrame() {
+            if (!isCameraActive || !pose) return;
+
+            if (videoElement.readyState >= 2) {
+                try {
+                    await pose.send({ image: videoElement });
+                } catch (e) {
+                    console.warn("Frame detection error:", e);
+                }
+            }
+
+            if (isCameraActive) {
+                animationFrameId = requestAnimationFrame(processVideoFrame);
+            }
+        }
+
+        function showCameraError(err) {
+            const errorBox = document.getElementById('cameraErrorBox');
+            const errorTitle = document.getElementById('camErrorTitle');
+            const errorMessage = document.getElementById('camErrorMessage');
+
+            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                errorTitle.innerText = "相機存取權限被拒絕";
+                errorMessage.innerText = "請點擊網址列旁的鎖頭圖示開啟相機權限後重試。";
+            } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                errorTitle.innerText = "未偵測到相機設備";
+                errorMessage.innerText = "請確認攝影鏡頭已正確連接至電腦或手機。";
+            } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                errorTitle.innerText = "鏡頭正被其他程式占用";
+                errorMessage.innerText = "請先關閉其他正使用鏡頭的視訊軟體 (Line, Zoom, Meet 等)。";
+            } else {
+                errorTitle.innerText = "無法啟動鏡頭";
+                errorMessage.innerText = err.message || "預覽環境限制了鏡頭調用。";
+            }
+
+            errorBox.classList.remove('hidden');
+        }
+
+        function dismissCameraError() {
+            document.getElementById('cameraErrorBox').classList.add('hidden');
+        }
+
+        function stopCamera() {
+            isCameraActive = false;
+
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+
+            if (videoElement.srcObject) {
+                const stream = videoElement.srcObject;
+                const tracks = stream.getTracks();
+                tracks.forEach(track => track.stop());
+                videoElement.srcObject = null;
+            }
+
+            cameraPlaceholder.classList.remove('hidden');
+            videoElement.classList.add('hidden');
+            liveStatusBadge.classList.add('hidden');
+            dynamicFormTip.classList.add('hidden');
+
+            document.getElementById('camBtnText').innerText = "開啟鏡頭";
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Resize canvas resolution
+            if (canvasElement.width !== videoElement.videoWidth) {
+                canvasElement.width = videoElement.videoWidth || 640;
+                canvasElement.height = videoElement.videoHeight || 480;
+            }
+
+            if (results.image) {
+                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            }
+
+            if (results.poseLandmarks) {
+                // Draw skeleton connectivities
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#3b82f6', lineWidth: 3 });
+                drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#60a5fa', lineWidth: 2, radius: 4 });
+
+                const landmarks = results.poseLandmarks;
+
+                // Determine side facing the camera (left vs right shoulder visibility)
+                const leftVis = landmarks[11].visibility || 0;
+                const rightVis = landmarks[12].visibility || 0;
+
+                let shoulder, hip, knee, ankle;
+                if (leftVis > rightVis) {
+                    shoulder = landmarks[11];
+                    hip = landmarks[23];
+                    knee = landmarks[25];
+                    ankle = landmarks[27];
+                } else {
+                    shoulder = landmarks[12];
+                    hip = landmarks[24];
+                    knee = landmarks[26];
+                    ankle = landmarks[28];
+                }
+
+                if (shoulder && hip && knee && ankle) {
+                    // Compute angles
+                    currentKneeAngle = Math.round(calculateAngle(hip, knee, ankle));
+                    currentTorsoAngle = Math.round(calculateAngle(shoulder, hip, knee));
+
+                    document.getElementById('kneeAngleVal').innerText = `${currentKneeAngle}°`;
+                    document.getElementById('torsoAngleVal').innerText = `${currentTorsoAngle}°`;
+
+                    // Knee angle icon feedback (purely display reference)
+                    const ruleKneeIcon = document.getElementById('ruleKneeIcon');
+                    ruleKneeIcon.className = "p-1.5 rounded-lg bg-blue-500/20 text-blue-400";
+
+                    // Form check on Lift Height (Torso angle representing 15-30cm shoulder lift)
+                    const ruleLiftIcon = document.getElementById('ruleLiftIcon');
+                    const isLiftValid = (currentTorsoAngle <= 105 && currentTorsoAngle >= 65);
+                    if (isLiftValid) {
+                        ruleLiftIcon.className = "p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400";
+                    } else if (currentTorsoAngle > 105) {
+                        ruleLiftIcon.className = "p-1.5 rounded-lg bg-slate-800 text-slate-400";
+                    }
+
+                    // Process State Machine
+                    processSitUpStateMachine(currentTorsoAngle, currentKneeAngle);
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        function processSitUpStateMachine(torsoAngle, kneeAngle) {
+            const DOWN_THRESHOLD = 135; // 平躺於墊上判定門檻
+            const UP_THRESHOLD = 105;   // 上身離地約 15-30 公分判定門檻
+
+            // Lock counting if timer finished in timer mode
+            if (currentMode === 'timer' && timerSeconds <= 0) {
+                updateStatus('1分鐘測驗結束！請查看體能報告', 'emerald');
+                return;
+            }
+
+            // Auto start timer if exercise begins in timer mode
+            if (currentMode === 'timer' && !isTimerRunning && timerSeconds === TOTAL_TIMER_DURATION && torsoAngle < UP_THRESHOLD + 15) {
+                start1MinTimer();
+            }
+
+            switch (sitUpState) {
+                case 'DOWN':
+                    updateStatus('預備姿勢：請平躺於瑜伽墊上', 'amber');
+                    // 當平躺回原位時，重置動作檢測標記
+                    hasReachedValidUp = false;
+                    
+                    if (torsoAngle < UP_THRESHOLD + 15) {
+                        sitUpState = 'GOING_UP';
+                    }
+                    break;
+
+                case 'GOING_UP':
+                    updateStatus('向上捲腹中... 肩膀離地 15-30 cm', 'blue');
+
+                    if (torsoAngle <= UP_THRESHOLD) {
+                        sitUpState = 'UP';
+                        hasReachedValidUp = true;
+                        speak("頂峰收緊");
+                        updateFormTip("達到標準離地高度！腹部收緊", "text-emerald-400");
+                    } else if (torsoAngle > DOWN_THRESHOLD) {
+                        sitUpState = 'DOWN';
+                        speak("高度不足");
+                        updateFormTip("無效動作：離地高度不足 15-30 公分！", "text-red-400");
+                    }
+                    break;
+
+                case 'UP':
+                    updateStatus('頂峰收縮：腹部收緊，控制力量緩慢躺回原位', 'emerald');
+
+                    if (torsoAngle > UP_THRESHOLD + 10) {
+                        sitUpState = 'GOING_DOWN';
+                    }
+                    break;
+
+                case 'GOING_DOWN':
+                    updateStatus('緩慢躺回原位，確保平躺觸墊', 'blue');
+
+                    if (torsoAngle >= DOWN_THRESHOLD) {
+                        // 必須符合：平躺出發 -> 抬起離地15-30cm -> 躺回墊上
+                        if (hasReachedValidUp) {
+                            count++;
+                            repCountDisplay.innerText = count;
+                            updateProgress();
+                            speak(`${count}`);
+                            updateFormTip(`標準動作！完成第 ${count} 次！`, "text-emerald-400");
+                        } else {
+                            speak("高度不足，不予計數");
+                            updateFormTip("不予計數：上身離地高度不足 15-30 公分！", "text-red-400");
+                        }
+                        sitUpState = 'DOWN';
+                    }
+                    break;
+            }
+        }
+
+        function switchMode(mode) {
+            currentMode = mode;
+            const modeTargetBtn = document.getElementById('modeTargetBtn');
+            const modeTimerBtn = document.getElementById('modeTimerBtn');
+            const targetModeBox = document.getElementById('targetModeBox');
+            const timerModeBox = document.getElementById('timerModeBox');
+            const progressBarContainer = document.getElementById('progressBarContainer');
+            const timerBarContainer = document.getElementById('timerBarContainer');
+            const startTimerBtn = document.getElementById('startTimerBtn');
+
+            if (mode === 'target') {
+                modeTargetBtn.className = "py-2.5 rounded-lg bg-blue-600 text-white shadow flex items-center justify-center gap-1.5 transition";
+                modeTimerBtn.className = "py-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center gap-1.5 transition";
+                targetModeBox.classList.remove('hidden');
+                timerModeBox.classList.add('hidden');
+                progressBarContainer.classList.remove('hidden');
+                timerBarContainer.classList.add('hidden');
+                startTimerBtn.classList.add('hidden');
+                stop1MinTimer();
+                resetCounter();
+            } else {
+                modeTargetBtn.className = "py-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center gap-1.5 transition";
+                modeTimerBtn.className = "py-2.5 rounded-lg bg-amber-600 text-white shadow flex items-center justify-center gap-1.5 transition";
+                targetModeBox.classList.add('hidden');
+                timerModeBox.classList.remove('hidden');
+                progressBarContainer.classList.add('hidden');
+                timerBarContainer.classList.remove('hidden');
+                startTimerBtn.classList.remove('hidden');
+                resetCounter();
+                speak("切換至一分鐘體能測驗模式，點擊開始測驗", true);
+            }
+        }
+
+        function updateTarget() {
+            const select = document.getElementById('targetSelect');
+            targetReps = parseInt(select.value, 10);
+            updateProgress();
+        }
+
+        function toggleTimerChallenge() {
+            if (isTimerRunning) {
+                stop1MinTimer();
+                speak("測驗已暫停");
+            } else {
+                start1MinTimer();
+            }
+        }
+
+        function start1MinTimer() {
+            if (timerSeconds <= 0) {
+                timerSeconds = TOTAL_TIMER_DURATION;
+                count = 0;
+                repCountDisplay.innerText = count;
+            }
+
+            isTimerRunning = true;
+            updateTimerUI();
+
+            // Start video recording stream
+            startRecording();
+
+            const timerBtnText = document.getElementById('timerBtnText');
+            const timerBtnIcon = document.getElementById('timerBtnIcon');
+            timerBtnText.innerText = "暫停 1 分鐘測驗";
+            timerBtnIcon.setAttribute('data-lucide', 'pause');
+            lucide.createIcons();
+
+            speak("一分鐘體能測驗開始！加油！", true);
+
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timerSeconds--;
+                updateTimerUI();
+
+                if (timerSeconds === 30) {
+                    speak("時間過了一半，繼續保持！");
+                } else if (timerSeconds === 10) {
+                    speak("最後 10 秒！衝刺！");
+                } else if (timerSeconds <= 0) {
+                    finish1MinTimer();
+                }
+            }, 1000);
+        }
+
+        function stop1MinTimer() {
+            isTimerRunning = false;
+            if (timerInterval) clearInterval(timerInterval);
+
+            // Stop recording
+            stopRecording();
+
+            const timerBtnText = document.getElementById('timerBtnText');
+            const timerBtnIcon = document.getElementById('timerBtnIcon');
+            if (timerBtnText) timerBtnText.innerText = "繼續 1 分鐘測驗";
+            if (timerBtnIcon) timerBtnIcon.setAttribute('data-lucide', 'play');
+            lucide.createIcons();
+        }
+
+        function finish1MinTimer() {
+            stop1MinTimer();
+            speak(`時間到！測驗結束！您在一分鐘內完成了 ${count} 次！`, true);
+
+            confetti({
+                particleCount: 120,
+                spread: 80,
+                origin: { y: 0.6 }
+            });
+
+            document.getElementById('resultReps').innerText = count;
+            document.getElementById('resultSpeed').innerText = count;
+
+            const ratingBox = document.getElementById('ratingBox');
+            if (count >= 35) {
+                ratingBox.innerText = "體能評語：體能極佳！核心力量表現非常紮實！";
+                ratingBox.className = "p-3 rounded-xl bg-emerald-900/30 border border-emerald-500/40 text-emerald-300 text-xs font-semibold";
+            } else if (count >= 25) {
+                ratingBox.innerText = "體能評語：體能良好！動作標準且富有耐力！";
+                ratingBox.className = "p-3 rounded-xl bg-blue-900/30 border border-blue-500/40 text-blue-300 text-xs font-semibold";
+            } else if (count >= 15) {
+                ratingBox.innerText = "體能評語：達到標準體能水準，持續練習將更上一層樓！";
+                ratingBox.className = "p-3 rounded-xl bg-amber-900/30 border border-amber-500/40 text-amber-300 text-xs font-semibold";
+            } else {
+                ratingBox.innerText = "體能評語：再接再勵！建議每天定時鍛鍊核心肌肉。";
+                ratingBox.className = "p-3 rounded-xl bg-purple-900/30 border border-purple-500/40 text-purple-300 text-xs font-semibold";
+            }
+
+            // Hide old video previews until new encoding completes
+            const videoPreview = document.getElementById('resultVideoPreview');
+            const downloadBtn = document.getElementById('downloadVideoBtn');
+            if (videoPreview) videoPreview.classList.add('hidden');
+            if (downloadBtn) downloadBtn.classList.add('hidden');
+
+            document.getElementById('resultModal').classList.remove('hidden');
+        }
+
+        function closeResultModal() {
+            document.getElementById('resultModal').classList.add('hidden');
+        }
+
+        function updateTimerUI() {
+            const minutes = Math.floor(Math.max(0, timerSeconds) / 60);
+            const seconds = Math.max(0, timerSeconds) % 60;
+            const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            
+            const timerDisplay = document.getElementById('timerDisplay');
+            if (timerDisplay) timerDisplay.innerText = timeStr;
+
+            const timerPercent = document.getElementById('timerPercent');
+            const timerBar = document.getElementById('timerBar');
+            const pct = Math.max(0, Math.round((timerSeconds / TOTAL_TIMER_DURATION) * 100));
+
+            if (timerPercent) timerPercent.innerText = pct + '%';
+            if (timerBar) timerBar.style.width = pct + '%';
+        }
+
+        function resetCounter() {
+            count = 0;
+            repCountDisplay.innerText = count;
+            updateProgress();
+            stop1MinTimer();
+            timerSeconds = TOTAL_TIMER_DURATION;
+            updateTimerUI();
+
+            const timerBtnText = document.getElementById('timerBtnText');
+            if (timerBtnText) timerBtnText.innerText = "開始 1 分鐘測驗";
+
+            sitUpState = 'DOWN';
+            updateStatus('請側躺於瑜伽墊上準備', 'amber');
+            speak("計數已重置，準備開始", true);
+        }
+
+        function updateProgress() {
+            if (currentMode === 'target') {
+                const pct = Math.min(Math.round((count / targetReps) * 100), 100);
+                progressBar.style.width = pct + '%';
+                progressPercent.innerText = pct + '%';
+
+                if (count >= targetReps && count > 0) {
+                    confetti({
+                        particleCount: 100,
+                        spread: 70,
+                        origin: { y: 0.6 }
+                    });
+                    speak(`太棒了！已完成目標 ${targetReps} 次！`, true);
+                }
+            }
+        }
+
+        function updateStatus(text, color) {
+            statusText.innerText = text;
+            if (color === 'emerald') {
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse";
+            } else if (color === 'blue') {
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse";
+            } else {
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse";
+            }
+        }
+
+        function updateFormTip(text, colorClass) {
+            formTipText.innerText = text;
+            formTipText.className = `${colorClass} font-medium`;
+        }
+    </script>
+</body>
+</html>
